@@ -1,10 +1,9 @@
 """Ponto de entrada do sistema."""
-from prep import carregar_dados
+from interface_app import render_console
 
 
 def main():
-    dados = carregar_dados()
-    print(dados.head())
+    render_console()
 
 
 if __name__ == "__main__":
