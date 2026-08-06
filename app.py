@@ -6,9 +6,9 @@ daquela transformação.
 import numpy as np
 import pandas as pd
 import streamlit as st
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 from avaliacao import avaliar
-from otimizacao import PARAMS_JSON, carregar_melhores_params
 from prep import (
     JANELA_PASSO,
     JANELA_TAMANHO,
@@ -74,9 +74,8 @@ def montar_amostras(modo):
 
 
 @st.cache_data(show_spinner="Treinando os modelos... isso leva alguns minutos.")
-def rodar_avaliacao(modo, params_serializados):
-    params = dict(params_serializados) if params_serializados else None
-    return avaliar(modo=modo, params=params)
+def rodar_avaliacao(modo):
+    return avaliar(modo=modo)
 
 
 def caixa_dataset(df, titulo, legenda="", linhas=10):
@@ -103,10 +102,10 @@ SECOES = [
     "Passo 4 — Escolher quais medidas usar",
     "Passo 5 — Fatiar em janelas",
     "Passo 6 — Resumir cada janela em números",
-    "Passo 7 — O modelo que aprende",
-    "Passo 8 — Como sabemos se funciona",
+    "Passo 7 — Separar treino e teste",
+    "Passo 8 — O modelo que aprende",
+    "Passo 9 — Como sabemos se funciona",
     "Experimento — tamanho da janela",
-    "Optuna — o que aquela mensagem queria dizer",
     "Resumo final e limitações",
 ]
 
@@ -193,7 +192,7 @@ if secao == SECOES[0]:
         nunca viu. Como existem 13 tipos de falha possíveis, chutar acertaria uns 8%. Então ele
         aprendeu alguma coisa real — mas está longe de ser confiável.
 
-        A seção **Passo 8** explica de onde vem esse 44%, e por que existe outro número (92%) que
+        A seção **Passo 9** explica de onde vem esse 44%, e por que existe outro número (92%) que
         parece muito melhor e **não** deve ser usado.
         """
     )
@@ -431,7 +430,7 @@ elif secao == SECOES[3]:
         Duas leituras do mesmo segmento são **muito parecidas** — mesmo motor, mesma montagem,
         poucos minutos de diferença. Elas quase não são exemplos independentes.
 
-        Isso vira o problema central do projeto no **Passo 8**. Vale lembrar deste ponto quando
+        Isso vira o problema central do projeto nos **Passos 7 e 9**. Vale lembrar deste ponto quando
         chegar lá.
         """
     )
@@ -1016,14 +1015,20 @@ elif secao == SECOES[7]:
     st.dataframe(janela_exemplo.head(10), width="stretch")
     st.caption(
         f"Formato: {janela_exemplo.shape[0]} linhas × {janela_exemplo.shape[1]} colunas. "
-        "Mostrando as 10 primeiras linhas."
+        "Mostrando as 10 primeiras linhas. A janela já vem de um ensaio com defeito conhecido — "
+        "essa resposta viaja junto com ela e reaparece na saída."
     )
 
-    st.markdown(f"**SAI:** uma linha só — com {len(vetor)} colunas")
+    classe_exemplo = amostras.iloc[0]["classe"]
+    ensaio_exemplo = int(amostras.iloc[0]["segment_id"])
+
+    st.markdown(f"**SAI:** uma linha só — com {len(vetor)} colunas, mais a resposta")
     linha_unica = pd.DataFrame([vetor], columns=NOMES_FEATURES, index=["janela nº 1"])
+    linha_unica.insert(0, "RESPOSTA: classe", classe_exemplo)
+    linha_unica.insert(1, "controle: segment_id", ensaio_exemplo)
     st.dataframe(linha_unica, width="stretch")
     st.caption(
-        f"Formato: 1 linha × {len(vetor)} colunas. "
+        f"Formato: 1 linha × {len(vetor)} colunas de números, mais 2 colunas de apoio. "
         "Arraste a barra horizontal para ver todas — a tabela é bem mais larga que a tela."
     )
 
@@ -1032,6 +1037,41 @@ elif secao == SECOES[7]:
         f"e saiu **uma linha só**, com {len(vetor)} colunas. "
         f"Cada uma das {len(amostras):,}".replace(",", ".")
         + " janelas vira uma linha dessas na tabela final."
+    )
+
+    st.markdown("#### As três coisas que essa linha carrega")
+    st.markdown(
+        f"""
+        Repare que a linha tem **três partes com papéis diferentes**. Confundi-las é fácil, e a
+        diferença importa:
+
+        | Parte | Quantas colunas | Papel |
+        |---|---|---|
+        | Os números do sinal | {len(vetor)} | **A pergunta.** É tudo o que o modelo enxerga para dar seu palpite. |
+        | `classe` | 1 | **A resposta certa.** É o que o modelo deve acertar. Ele a vê no treino, para aprender; e ela fica escondida no teste, para valer como prova. |
+        | `segment_id` | 1 | **Nem pergunta, nem resposta.** É só a etiqueta de qual ensaio essa janela veio. O modelo nunca a recebe. |
+
+        ### Por que a resposta anda junto
+
+        É isso que caracteriza o **aprendizado supervisionado**: cada exemplo vem acompanhado do
+        gabarito. O computador olha milhares de linhas dessas, com pergunta e resposta lado a
+        lado, e tenta descobrir sozinho qual combinação de números leva a qual defeito.
+
+        Sem a coluna `classe`, os {len(vetor)} números seriam apenas números — não haveria nada
+        a aprender.
+
+        ### E para que serve o `segment_id`, então
+
+        Ele não ajuda a prever nada, mas é **essencial na hora de testar**. É por ele que o
+        sistema garante que todas as janelas de um mesmo ensaio fiquem do mesmo lado da divisão
+        entre treino e teste. Sem isso, o modelo colaria — é exatamente o assunto do **Passo 7**.
+        """
+    )
+
+    st.info(
+        f"**Nesta janela de exemplo:** a resposta é `{classe_exemplo}`, e ela veio do ensaio "
+        f"nº {ensaio_exemplo}. O modelo recebe os {len(vetor)} números e precisa chegar em "
+        f"`{classe_exemplo}` sozinho."
     )
 
     st.markdown("#### A mesma informação, virada de lado")
@@ -1109,11 +1149,202 @@ elif secao == SECOES[7]:
 
 
 # ---------------------------------------------------------------------------
-# 8. Passo 7 — Modelo
+# 8. Passo 7 — Treino e teste
 # ---------------------------------------------------------------------------
 
 elif secao == SECOES[8]:
-    st.title("Passo 7 — O modelo que aprende")
+    st.title("Passo 7 — Separar treino e teste")
+
+    amostras = montar_amostras("janela")
+
+    st.markdown(
+        """
+        ### Por que separar
+
+        Se o computador estudar **todos** os exemplos e depois for testado nos mesmos exemplos,
+        ele tira nota máxima sem ter aprendido nada — basta ter decorado.
+
+        É como dar ao aluno a prova com o gabarito junto. Ele acerta tudo, e você não descobriu
+        se ele sabe a matéria.
+
+        Por isso a tabela do Passo 6 é cortada em duas:
+
+        - **Treino** — os exemplos que o computador pode estudar, com a resposta à vista.
+        - **Teste** — exemplos guardados no cofre. A resposta deles é escondida, o computador
+          dá seu palpite, e só então comparamos.
+
+        A divisão usual é **80% para treino e 20% para teste**.
+
+        ### Mas *como* cortar faz toda a diferença
+
+        Existem duas maneiras de fazer esse corte, e elas produzem resultados muito diferentes.
+        Escolha abaixo para ver os dois bancos de dados resultantes.
+        """
+    )
+
+    st.divider()
+
+    tipo_divisao = st.radio(
+        "Como fazer o corte:",
+        ["aleatoria", "por_ensaio"],
+        format_func=lambda v: (
+            "Jeito 1 — sortear as janelas (errado)"
+            if v == "aleatoria"
+            else "Jeito 2 — separar por ensaio (correto)"
+        ),
+        horizontal=True,
+    )
+
+    X = np.vstack(amostras["features"].to_list())
+    y = amostras["classe"].to_numpy()
+    grupos = amostras["segment_id"].to_numpy()
+
+    if tipo_divisao == "aleatoria":
+        idx_treino, idx_teste = train_test_split(
+            np.arange(len(y)), test_size=0.2, random_state=0, stratify=y
+        )
+        st.markdown(
+            """
+            #### Jeito 1 — sortear as janelas
+
+            Embaralha as 1.559 janelas e separa 20% ao acaso. É o `train_test_split` comum.
+            """
+        )
+    else:
+        divisor = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
+        idx_treino, idx_teste = next(divisor.split(X, y, groups=grupos))
+        st.markdown(
+            """
+            #### Jeito 2 — separar por ensaio
+
+            Sorteia **ensaios inteiros**, não janelas soltas. Se o ensaio nº 12 caiu no teste,
+            todas as janelas dele vão para o teste, e nenhuma sobra no treino.
+            """
+        )
+
+    tabela = pd.DataFrame(X, columns=NOMES_FEATURES)
+    tabela.insert(0, "classe", y)
+    tabela.insert(1, "segment_id", grupos)
+
+    treino = tabela.iloc[idx_treino].reset_index(drop=True)
+    teste = tabela.iloc[idx_teste].reset_index(drop=True)
+
+    st.markdown("### Os dois bancos de dados resultantes")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### TREINO")
+        st.caption("O computador estuda estes exemplos, com a resposta à vista.")
+        st.dataframe(treino.head(8), width="stretch")
+        st.metric("Janelas", f"{len(treino):,}".replace(",", "."))
+        st.metric("Ensaios diferentes", treino["segment_id"].nunique())
+        st.metric("Defeitos representados", treino["classe"].nunique())
+        st.download_button(
+            "Baixar treino (CSV)",
+            data=treino.to_csv(index=False),
+            file_name=f"treino_{tipo_divisao}.csv",
+            mime="text/csv",
+        )
+    with col2:
+        st.markdown("#### TESTE")
+        st.caption("Guardados no cofre. A resposta é escondida na hora de avaliar.")
+        st.dataframe(teste.head(8), width="stretch")
+        st.metric("Janelas", f"{len(teste):,}".replace(",", "."))
+        st.metric("Ensaios diferentes", teste["segment_id"].nunique())
+        st.metric("Defeitos representados", teste["classe"].nunique())
+        st.download_button(
+            "Baixar teste (CSV)",
+            data=teste.to_csv(index=False),
+            file_name=f"teste_{tipo_divisao}.csv",
+            mime="text/csv",
+        )
+
+    st.caption(
+        f"Proporção: {100*len(treino)/len(tabela):.0f}% treino / "
+        f"{100*len(teste)/len(tabela):.0f}% teste. "
+        f"Cada linha continua sendo uma janela, com as {len(NOMES_FEATURES)} colunas de números, "
+        "a resposta (`classe`) e a etiqueta do ensaio (`segment_id`)."
+    )
+
+    st.divider()
+    st.markdown("### O teste que revela a diferença entre os dois jeitos")
+    st.markdown(
+        "A pergunta decisiva: **algum ensaio aparece dos dois lados ao mesmo tempo?** "
+        "Se aparecer, o computador já viu aquele motor durante o estudo, e a prova deixa de "
+        "valer."
+    )
+
+    ensaios_treino = set(treino["segment_id"])
+    ensaios_teste = set(teste["segment_id"])
+    vazados = ensaios_treino & ensaios_teste
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Ensaios no treino", len(ensaios_treino))
+    col2.metric("Ensaios no teste", len(ensaios_teste))
+    col3.metric("Ensaios nos DOIS lados", len(vazados))
+
+    if vazados:
+        st.error(
+            f"**{len(vazados)} dos {len(ensaios_teste)} ensaios do teste também estão no "
+            f"treino** — ou seja, {100*len(vazados)/len(ensaios_teste):.0f}% deles. "
+            "O computador vai reencontrar na prova motores que estudou. Como janelas do mesmo "
+            "ensaio são quase idênticas (mesmo motor, mesma montagem, minutos de diferença, "
+            "e ainda com metade do conteúdo repetido entre janelas vizinhas), isso é **cola**. "
+            "A nota sai alta e não significa nada."
+        )
+        st.markdown("**Alguns ensaios que vazaram, e quantas janelas cada um tem de cada lado:**")
+        prova = (
+            pd.DataFrame(
+                {
+                    "segment_id": sorted(vazados),
+                    "janelas no treino": [
+                        int((treino["segment_id"] == s).sum()) for s in sorted(vazados)
+                    ],
+                    "janelas no teste": [
+                        int((teste["segment_id"] == s).sum()) for s in sorted(vazados)
+                    ],
+                }
+            )
+            .sort_values("janelas no teste", ascending=False)
+            .reset_index(drop=True)
+        )
+        st.dataframe(prova.head(12), width="stretch")
+    else:
+        st.success(
+            "**Nenhum ensaio aparece nos dois lados.** Todo motor testado é um motor que o "
+            "computador nunca viu. A nota que sair daqui é uma nota honesta — é a resposta "
+            "para a pergunta que importa: *vai funcionar num motor novo?*"
+        )
+
+    st.divider()
+    st.markdown("### O preço de fazer certo")
+    st.markdown(
+        """
+        Separar por ensaio é o correto, mas cobra um preço, e é justo mostrá-lo:
+
+        - **O corte não sai exatamente em 80/20.** Como os ensaios têm tamanhos diferentes,
+          sorteá-los inteiros faz a proporção variar um pouco.
+        - **Alguns defeitos podem não cair no teste.** Se um defeito tem poucos ensaios, é
+          possível que todos fiquem do mesmo lado. Compare o número de defeitos representados
+          nos dois quadros acima.
+
+        Ainda assim, compensa. Uma nota honesta e imperfeita vale mais que uma nota alta e falsa.
+        """
+    )
+
+    st.info(
+        "**O que vem a seguir.** Esta seção mostrou um corte único, para a ideia ficar visível. "
+        "Na prática o projeto repete esse corte 5 vezes, com pedaços diferentes no teste a cada "
+        "vez, e tira a média. É a validação cruzada do **Passo 9**."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 9. Passo 8 — Modelo
+# ---------------------------------------------------------------------------
+
+elif secao == SECOES[9]:
+    st.title("Passo 8 — O modelo que aprende")
 
     st.markdown(
         """
@@ -1192,11 +1423,11 @@ elif secao == SECOES[8]:
 
 
 # ---------------------------------------------------------------------------
-# 9. Passo 8 — Validação
+# 10. Passo 9 — Validação
 # ---------------------------------------------------------------------------
 
-elif secao == SECOES[9]:
-    st.title("Passo 8 — Como sabemos se funciona")
+elif secao == SECOES[10]:
+    st.title("Passo 9 — Como sabemos se funciona")
 
     st.markdown(
         """
@@ -1299,7 +1530,7 @@ elif secao == SECOES[9]:
     )
 
     if st.button("Executar a validação", type="primary"):
-        resultados = rodar_avaliacao(modo, None)
+        resultados = rodar_avaliacao(modo)
 
         col1, col2 = st.columns(2)
         for coluna, resultado in zip((col1, col2), resultados):
@@ -1332,16 +1563,16 @@ elif secao == SECOES[9]:
             f"**Sobre a variação entre as rodadas.** As 5 rodadas honestas variaram com desvio "
             f"de {espalhamento*100:.1f} pontos. Isso é bastante: com janela de {JANELA_TAMANHO} "
             "sobram poucos ensaios, então cada rodada testa em pouca gente e o resultado balança "
-            "muito. Diferenças pequenas entre configurações não são confiáveis — ponto que volta "
-            "na seção do Optuna."
+            "muito. Diferenças pequenas entre configurações não são confiáveis — vale lembrar "
+            "disso ao comparar os tamanhos de janela na próxima seção."
         )
 
 
 # ---------------------------------------------------------------------------
-# 10. Experimento janelas
+# 11. Experimento janelas
 # ---------------------------------------------------------------------------
 
-elif secao == SECOES[10]:
+elif secao == SECOES[11]:
     st.title("Experimento — qual o melhor tamanho de janela?")
 
     st.markdown(
@@ -1428,175 +1659,6 @@ elif secao == SECOES[10]:
         "A lição maior do experimento: quatro tamanhos diferentes, e a acurácia honesta variou "
         "só 3 pontos. Mexer no tamanho da janela não resolve o problema deste sistema. O que "
         "trava o resultado é outra coisa — o modelo aprender ensaio em vez de defeito."
-    )
-
-
-# ---------------------------------------------------------------------------
-# 11. Optuna
-# ---------------------------------------------------------------------------
-
-elif secao == SECOES[11]:
-    st.title("Optuna — o que aquela mensagem queria dizer")
-
-    st.markdown(
-        """
-        Se você marcou a opção de usar os parâmetros do Optuna e apareceu um aviso dizendo que
-        eles são **piores**, esta seção explica o que aconteceu. É um resultado que confunde à
-        primeira vista, e vale a pena entender.
-        """
-    )
-
-    st.divider()
-    st.markdown(
-        """
-        ### O que o Optuna faz
-
-        O modelo tem "botões de ajuste": quantas árvores usar, quão profundas elas podem ser,
-        quantos exemplos são necessários para criar uma nova pergunta, e assim por diante. Esses
-        botões se chamam **hiperparâmetros**.
-
-        Escolher bons valores na mão é chute. O Optuna é uma ferramenta que testa muitas
-        combinações automaticamente e vai aprendendo quais regiões são promissoras — em vez de
-        sortear às cegas.
-
-        Testamos **80 combinações diferentes**.
-        """
-    )
-
-    st.markdown("### O que ele encontrou")
-
-    if PARAMS_JSON.exists():
-        melhores = carregar_melhores_params()
-        traducao = {
-            "n_estimators": "Quantidade de árvores na floresta",
-            "criterion": "Fórmula usada para escolher cada pergunta",
-            "max_depth": "Profundidade máxima de cada árvore",
-            "min_samples_split": "Mínimo de exemplos para criar uma pergunta nova",
-            "min_samples_leaf": "Mínimo de exemplos em cada resposta final",
-            "max_features": "Quantas medidas cada árvore pode considerar por vez",
-            "class_weight": "Se dá peso extra aos defeitos com poucos exemplos",
-            "bootstrap": "Se cada árvore vê uma amostra sorteada ou os dados todos",
-        }
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {"botão": traducao.get(k, k), "valor escolhido": str(v)}
-                    for k, v in melhores.items()
-                    if k in traducao
-                ]
-            ),
-            width="stretch",
-        )
-    else:
-        st.info("Rode `python otimizacao.py` para gerar os parâmetros.")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Ajustes padrão (sem Optuna)", "43,8%")
-    col2.metric("Melhor combinação do Optuna", "45,3%", delta="+1,5 ponto")
-
-    st.markdown("Parece uma melhora. **Mas não é.**")
-
-    st.divider()
-    st.markdown(
-        """
-        ### Onde está a pegadinha
-
-        #### A analogia da loteria
-
-        Imagine que você quer descobrir se alguém tem talento para prever a loteria.
-
-        Você chama **80 pessoas** e pede o palpite de cada uma para os sorteios da semana passada.
-        Uma delas acerta bem mais que as outras. Você anuncia: *"encontramos a vidente!"*
-
-        Mas espere. Com 80 pessoas chutando, é **esperado** que alguma se saia melhor — por puro
-        acaso. Você não descobriu talento. Você descobriu **a pessoa mais sortuda daquela
-        semana específica**.
-
-        Na semana seguinte, ela volta a ser gente comum.
-
-        #### Foi exatamente isso que aconteceu
-
-        O Optuna testou 80 combinações **nas mesmas 5 rodadas de teste**, e escolheu a que se saiu
-        melhor **naquelas 5 rodadas**. Como vimos no Passo 8, essas rodadas variam muito entre si
-        — desvio de uns 7 pontos.
-
-        Com uma variação dessa e 80 tentativas, alguma combinação acerta o padrão de sorte
-        daquelas rodadas. Os 45,3% mediram sorte, não qualidade.
-        """
-    )
-
-    st.divider()
-    st.markdown(
-        """
-        ### Como descobrimos que era sorte
-
-        Existe um teste mais rigoroso, chamado **validação aninhada**. A ideia: fazer a busca do
-        Optuna **só dentro do material de treino**, e depois testar em ensaios que não
-        participaram nem do treino nem da busca.
-
-        Voltando à analogia: em vez de premiar quem acertou os sorteios da semana passada, você
-        pega a pessoa escolhida e pede o palpite dela para os sorteios da **semana que vem** —
-        que ninguém viu ainda.
-
-        **O resultado:**
-        """
-    )
-
-    comparacao = pd.DataFrame(
-        {
-            "rodada": ["1", "2", "3", "4", "5", "MÉDIA"],
-            "com Optuna": ["52,3%", "37,3%", "44,6%", "35,6%", "34,5%", "40,8%"],
-            "ajustes padrão": ["52,3%", "45,8%", "51,2%", "34,6%", "35,1%", "43,8%"],
-            "quem ganhou": ["empate", "padrão", "padrão", "Optuna", "padrão", "PADRÃO"],
-        }
-    )
-    st.dataframe(comparacao, width="stretch")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Com Optuna (teste rigoroso)", "40,8%")
-    col2.metric("Ajustes padrão", "43,8%", delta="+3,0 pontos", delta_color="normal")
-
-    st.error(
-        "**Os ajustes encontrados pelo Optuna são 3 pontos PIORES que não ter ajustado nada.** "
-        "O ganho de +1,5 ponto era ilusão. Por isso o aviso na tela: eles estão disponíveis para "
-        "inspeção, mas não são usados pelo sistema."
-    )
-
-    st.divider()
-    st.markdown(
-        """
-        ### Por que o Optuna falhou aqui — e isso não é defeito dele
-
-        O Optuna funciona bem quando existe sinal claro para otimizar. Aqui não existia.
-
-        Com janela de 180, sobram **75 ensaios**. Divididos em 5 rodadas, cada teste tem uns 15
-        ensaios. Com tão pouca gente, o resultado de cada rodada balança uns 7 pontos só por
-        causa de **quais** ensaios caíram no teste.
-
-        A diferença real entre uma boa e uma má configuração de botões é **menor que esses 7
-        pontos de balanço**. O sinal está afogado no ruído.
-
-        O Optuna fez o trabalho dele: encontrou o que maximizava o número que você pediu. O
-        problema é que aquele número era, em boa parte, ruído — e ele otimizou o ruído.
-
-        ### A lição
-
-        Isso não significa que ajustar hiperparâmetros seja inútil em geral. Significa que **neste
-        conjunto de dados, com esta quantidade de ensaios, não há o que ajustar.**
-
-        O que trava o sistema é o mesmo de sempre: poucos ensaios, e o modelo aprendendo a
-        reconhecer o ensaio em vez do defeito. Enquanto isso não mudar, nem tamanho de janela nem
-        ajuste de botões vai mover o resultado.
-        """
-    )
-
-    st.divider()
-    st.markdown("### Uma decisão de projeto que vale explicar")
-    st.info(
-        "A busca foi configurada para otimizar a **acurácia honesta** (divisão por ensaio), não "
-        "a inflada. Se tivesse sido apontada para a inflada, o Optuna teria encontrado os ajustes "
-        "que melhor **colam** — exatamente o defeito que já limita o sistema. O número apareceria "
-        "perto de 93% e não significaria nada."
     )
 
 
@@ -1709,8 +1771,7 @@ elif secao == SECOES[12]:
         pd.DataFrame(
             [
                 {"arquivo": "prep.py", "responsabilidade": "Passos 1 a 6 — toda a preparação dos dados"},
-                {"arquivo": "avaliacao.py", "responsabilidade": "Passo 8 — as duas validações"},
-                {"arquivo": "otimizacao.py", "responsabilidade": "A busca do Optuna e o teste rigoroso"},
+                {"arquivo": "avaliacao.py", "responsabilidade": "Passos 7 e 9 — divisão treino/teste e validação"},
                 {"arquivo": "sistema.py", "responsabilidade": "Consultar o modelo já treinado"},
                 {"arquivo": "app.py", "responsabilidade": "Esta interface"},
                 {"arquivo": "pipeline_manutencao_preditiva.ipynb", "responsabilidade": "A mesma explicação em formato de notebook"},

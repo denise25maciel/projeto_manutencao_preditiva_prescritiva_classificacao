@@ -6,19 +6,12 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 from interface_app import render_console
-from otimizacao import PARAMS_PADRAO, carregar_melhores_params
 from prep import carregar, preparar_dataframe, criar_amostras, janelar, features_janela, SINAIS
 
 
 class SistemaConsulta:
-    def __init__(self, params=None, usar_otimizados=False) -> None:
-        # Os parâmetros do Optuna são opt-in: a validação aninhada mostrou que eles
-        # generalizam pior que o padrão neste conjunto (0.408 contra 0.438).
-        if params is None:
-            params = carregar_melhores_params() if usar_otimizados else dict(PARAMS_PADRAO)
-
-        self.params = params
-        self.modelo = RandomForestClassifier(**self.params)
+    def __init__(self) -> None:
+        self.modelo = RandomForestClassifier(n_estimators=400, random_state=0, n_jobs=-1)
         self.classes_ = None
         self._treinar()
 

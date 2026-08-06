@@ -13,7 +13,9 @@
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -)",
       "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe \"C:/Users/denis/AppData/Local/Temp/claude/c--Users-denis-Documents-projeto-manutencao-preditiva-prescritiva-classificacao/08498b3e-1003-4a0e-be69-78203e5cac55/scratchpad/gerar_notebook.py\")",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -u \"C:/Users/denis/AppData/Local/Temp/claude/c--Users-denis-Documents-projeto-manutencao-preditiva-prescritiva-classificacao/08498b3e-1003-4a0e-be69-78203e5cac55/scratchpad/smoke.py\")"
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -u \"C:/Users/denis/AppData/Local/Temp/claude/c--Users-denis-Documents-projeto-manutencao-preditiva-prescritiva-classificacao/08498b3e-1003-4a0e-be69-78203e5cac55/scratchpad/smoke.py\")",
+      "WebFetch(domain:colab.research.google.com)",
+      "Bash(PYTHONIOENCODING=utf-8 python -)"
     ]
   }
 }
