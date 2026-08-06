@@ -1,7 +1,7 @@
 import unittest
 
 from avaliacao import avaliar
-from prep import carregar, janelar, SINAIS
+from prep import carregar, janelar, JANELA_PASSO, JANELA_TAMANHO, SINAIS
 
 
 class PrepTests(unittest.TestCase):
@@ -27,8 +27,9 @@ class PrepTests(unittest.TestCase):
         df = carregar()
         janelas = janelar(df)
 
+        self.assertEqual(JANELA_PASSO, JANELA_TAMANHO // 2)
         self.assertIn("janela_bruta", janelas.columns)
-        self.assertEqual(janelas.iloc[0]["janela_bruta"].shape[0], 30)
+        self.assertEqual(janelas.iloc[0]["janela_bruta"].shape[0], JANELA_TAMANHO)
         self.assertEqual(janelas.iloc[0]["janela_bruta"].shape[1], len(SINAIS))
         self.assertEqual(len(janelas.iloc[0]["features"]), 90)
 

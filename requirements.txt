@@ -1,0 +1,8 @@
+pandas==3.0.5
+numpy==2.5.1
+scikit-learn==1.9.0
+streamlit==1.61.1
+
+# Necessário apenas para rodar a busca de hiperparâmetros (otimizacao.py).
+# app.py e sistema.py funcionam sem ele, lendo melhores_params.json.
+optuna==4.9.0

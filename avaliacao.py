@@ -7,16 +7,25 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 from sklearn.metrics import accuracy_score
 
-from prep import carregar, janelar
+from prep import carregar, criar_amostras
 
 
-def avaliar(n_estimators=400):
+def avaliar(n_estimators=400, modo="segmento", params=None):
+    """Valida o modelo com as duas estratégias de divisão.
+
+    `params` recebe um dicionário completo de hiperparâmetros (por exemplo o
+    resultado da busca em otimizacao.py). Quando omitido, usa o padrão histórico
+    controlado por `n_estimators`.
+    """
+    if params is None:
+        params = {"n_estimators": n_estimators, "random_state": 0, "n_jobs": -1}
+
     df = carregar()
-    janelas = janelar(df)
+    amostras = criar_amostras(df, modo=modo)
 
-    X = np.vstack(janelas["features"].to_list())
-    y = janelas["classe"].to_numpy()
-    groups = janelas["segment_id"].to_numpy()
+    X = np.vstack(amostras["features"].to_list())
+    y = amostras["classe"].to_numpy()
+    groups = amostras["segment_id"].to_numpy()
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
     sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=0)
@@ -25,7 +34,7 @@ def avaliar(n_estimators=400):
     for splitter, name in [(skf, "aleatoria"), (sgkf, "por_segmento")]:
         fold_results = []
         for fold_idx, (train_idx, test_idx) in enumerate(splitter.split(X, y, groups)):
-            model = RandomForestClassifier(n_estimators=n_estimators, random_state=0, n_jobs=-1)
+            model = RandomForestClassifier(**params)
             model.fit(X[train_idx], y[train_idx])
             preds = model.predict(X[test_idx])
             score = accuracy_score(y[test_idx], preds)
@@ -39,7 +48,7 @@ def avaliar(n_estimators=400):
                     "test_idx": test_idx,
                     "y_true": y[test_idx],
                     "y_pred": preds,
-                    "teste_janelas": janelas.iloc[test_idx].copy(),
+                    "teste_amostras": amostras.iloc[test_idx].copy(),
                 }
             )
 

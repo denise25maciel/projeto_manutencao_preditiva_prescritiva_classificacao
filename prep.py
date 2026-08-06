@@ -6,6 +6,11 @@ import pandas as pd
 DATA_DIR = Path(__file__).resolve().parent
 BANNER_CSV = DATA_DIR / "banner.csv"
 
+# Tamanho da janela usada pelo modelo, em número de amostras consecutivas.
+# O passo é metade da janela, o que gera 50% de sobreposição.
+JANELA_TAMANHO = 180
+JANELA_PASSO = JANELA_TAMANHO // 2
+
 SINAIS = [
     "z_rms_velocity_mm_s",
     "temperature_c",
@@ -127,23 +132,26 @@ def carregar_dados():
     return carregar()
 
 
-def features_janela(janela: pd.DataFrame) -> np.ndarray:
-    if len(janela) != 30:
-        raise ValueError("A janela deve conter exatamente 30 amostras")
+def _features_resumo(dados: pd.DataFrame) -> np.ndarray:
+    valores = dados[SINAIS].to_numpy(dtype=float)
+    n = len(dados)
 
-    valores = janela[SINAIS].to_numpy(dtype=float)
-    n = len(janela)
-    t = np.arange(n) - (n - 1) / 2
-    denom = float(np.dot(t, t))
+    if n <= 1:
+        t = np.array([0.0] * n, dtype=float)
+        denom = 1.0
+    else:
+        t = np.arange(n) - (n - 1) / 2
+        denom = float(np.dot(t, t))
 
     features = []
     for coluna in range(valores.shape[1]):
         x = valores[:, coluna]
+        slope = float(np.dot(t, x) / denom) if denom > 0 else 0.0
         features.extend(
             [
                 float(np.median(x)),
                 float(np.std(x)),
-                float(np.dot(t, x) / denom),
+                slope,
                 float(np.max(x) - np.min(x)),
                 float(np.percentile(x, 90) - np.percentile(x, 10)),
             ]
@@ -152,24 +160,56 @@ def features_janela(janela: pd.DataFrame) -> np.ndarray:
     return np.array(features, dtype=float)
 
 
-def janelar(df: pd.DataFrame, tamanho=30, passo=15):
-    janelas = []
+def features_janela(janela: pd.DataFrame, tamanho=JANELA_TAMANHO) -> np.ndarray:
+    if len(janela) != tamanho:
+        raise ValueError(f"A janela deve conter exatamente {tamanho} amostras")
+    return _features_resumo(janela)
+
+
+def features_segmento(segmento: pd.DataFrame) -> np.ndarray:
+    if segmento.empty:
+        raise ValueError("O segmento deve conter pelo menos uma amostra")
+    return _features_resumo(segmento)
+
+
+def criar_amostras(df: pd.DataFrame, modo="segmento", tamanho=JANELA_TAMANHO, passo=JANELA_PASSO):
+    modo = str(modo).lower()
+    amostras = []
+
     for segment_id, grupo in df.groupby("segment_id", sort=True):
+        if grupo.empty:
+            continue
+
+        if modo in {"segmento", "sem_janela", "segmento_completo"}:
+            amostras.append(
+                {
+                    "features": features_segmento(grupo),
+                    "classe": grupo["classe"].iloc[0],
+                    "segment_id": int(segment_id),
+                    "dados_brutos": grupo[SINAIS].copy(),
+                }
+            )
+            continue
+
         if len(grupo) < tamanho:
             continue
 
         for inicio in range(0, len(grupo) - tamanho + 1, passo):
             janela = grupo.iloc[inicio : inicio + tamanho]
-            janelas.append(
+            amostras.append(
                 {
-                    "features": features_janela(janela),
+                    "features": features_janela(janela, tamanho=tamanho),
                     "classe": janela["classe"].iloc[0],
                     "segment_id": int(segment_id),
                     "janela_bruta": janela[SINAIS].copy(),
                 }
             )
 
-    return pd.DataFrame(janelas)
+    return pd.DataFrame(amostras)
+
+
+def janelar(df: pd.DataFrame, tamanho=JANELA_TAMANHO, passo=JANELA_PASSO):
+    return criar_amostras(df, modo="janela", tamanho=tamanho, passo=passo)
 
 
 if __name__ == "__main__":
