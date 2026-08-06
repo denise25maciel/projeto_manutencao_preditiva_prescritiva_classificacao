@@ -1,6 +1,7 @@
 import unittest
 
-from prep import carregar
+from avaliacao import avaliar
+from prep import carregar, janelar, SINAIS
 
 
 class PrepTests(unittest.TestCase):
@@ -21,6 +22,22 @@ class PrepTests(unittest.TestCase):
         self.assertAlmostEqual(dt.median(), 2.0, delta=0.01)
         self.assertEqual((dt > 3600).sum(), 56)
         self.assertEqual(df["segment_id"].nunique(), 240)
+
+    def test_janelar_preserva_janela_bruta_e_features(self):
+        df = carregar()
+        janelas = janelar(df)
+
+        self.assertIn("janela_bruta", janelas.columns)
+        self.assertEqual(janelas.iloc[0]["janela_bruta"].shape[0], 30)
+        self.assertEqual(janelas.iloc[0]["janela_bruta"].shape[1], len(SINAIS))
+        self.assertEqual(len(janelas.iloc[0]["features"]), 90)
+
+    def test_avaliar_retorna_classe_real_e_prevista(self):
+        resultados = avaliar(n_estimators=40)
+
+        self.assertTrue(resultados)
+        self.assertIn("y_true", resultados[0]["folds"][0])
+        self.assertIn("y_pred", resultados[0]["folds"][0])
 
 
 if __name__ == "__main__":
